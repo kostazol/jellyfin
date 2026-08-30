@@ -1,9 +1,6 @@
 name: Build localized alphabet Jellyfin image
 
 on:
-  push:
-    branches:
-      - build/localized-alphabet-image
   workflow_dispatch:
 
 permissions:
@@ -72,8 +69,6 @@ jobs:
           RUN chmod +x /jellyfin/jellyfin
           LABEL org.opencontainers.image.source="https://github.com/kostazol/jellyfin"
           LABEL org.opencontainers.image.description="Jellyfin 12 localized alphabet navigation test image"
-          LABEL org.opencontainers.image.revision.server="131759a99b42174b8caa1cab9ae2a4a858351cbf"
-          LABEL org.opencontainers.image.revision.web="22feeefa358364e1192ed6ac6b671f42b2680e6f"
           EOF
 
       - name: Set up Docker Buildx
@@ -93,11 +88,4 @@ jobs:
           file: Dockerfile.runtime-test
           push: true
           platforms: linux/amd64
-          tags: |
-            ghcr.io/kostazol/jellyfin-localized-alphabet:test-rc5
-            ghcr.io/kostazol/jellyfin-localized-alphabet:rc5-server-131759a-web-22feeef
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Image name
-        run: echo 'ghcr.io/kostazol/jellyfin-localized-alphabet:test-rc5'
+          tags: ghcr.io/kostazol/jellyfin-localized-alphabet:test
