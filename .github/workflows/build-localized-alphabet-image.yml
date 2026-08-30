@@ -1,0 +1,69 @@
+name: Build localized alphabet Jellyfin image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout Jellyfin server feature
+        uses: actions/checkout@v4
+        with:
+          repository: kostazol/jellyfin
+          ref: feature/localized-alphabet-navigation
+          path: jellyfin-server
+
+      - name: Checkout Jellyfin Web feature
+        uses: actions/checkout@v4
+        with:
+          repository: kostazol/jellyfin-web
+          ref: feature/localized-alphabet-navigation
+          path: jellyfin-web
+
+      - name: Checkout official Jellyfin packaging
+        uses: actions/checkout@v4
+        with:
+          repository: jellyfin/jellyfin-packaging
+          ref: master
+          path: jellyfin-packaging
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push test image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: jellyfin-packaging/docker/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ghcr.io/kostazol/jellyfin-localized-alphabet:test
+            ghcr.io/kostazol/jellyfin-localized-alphabet:server-131759a-web-22feeef
+          build-args: |
+            DOTNET_VERSION=10.0
+            NODEJS_VERSION=24
+            PACKAGE_ARCH=amd64
+            DOTNET_ARCH=x64
+            IMAGE_ARCH=amd64
+            TARGET_ARCH=amd64
+            JELLYFIN_VERSION=12.0-localized-alphabet
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image name
+        run: echo 'ghcr.io/kostazol/jellyfin-localized-alphabet:test'
