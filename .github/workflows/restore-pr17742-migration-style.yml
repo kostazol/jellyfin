@@ -1,0 +1,59 @@
+name: Restore PR 17742 migration style
+
+on:
+  push:
+    branches:
+      - build/localized-alphabet-image
+    paths:
+      - .github/workflows/restore-pr17742-migration-style.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  restore-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/localized-alphabet-navigation
+          fetch-depth: 0
+
+      - name: Restore project-style migration implementation
+        run: |
+          git checkout 2987f51555d8e249ebfcf1b4561a317b3dbcc32e -- Jellyfin.Server/Migrations/Routines/20260829190000_RefreshSortNameInitials.cs
+          git diff --check
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Verify formatting
+        run: dotnet format --verify-no-changes --verbosity minimal
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore
+
+      - name: Test controller
+        run: dotnet test tests/Jellyfin.Controller.Tests/Jellyfin.Controller.Tests.csproj --no-build --no-restore
+
+      - name: Test server implementations
+        run: dotnet test tests/Jellyfin.Server.Implementations.Tests/Jellyfin.Server.Implementations.Tests.csproj --no-build --no-restore
+
+      - name: Exercise startup migrations
+        run: dotnet test tests/Jellyfin.Server.Integration.Tests/Jellyfin.Server.Integration.Tests.csproj -c Release --filter Jellyfin.Server.Integration.Tests.OpenApiSpecTests
+
+      - name: Commit and push restoration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Jellyfin.Server/Migrations/Routines/20260829190000_RefreshSortNameInitials.cs
+          git commit -m "Restore partition helper for SortNameInitial migration"
+          git push origin HEAD:feature/localized-alphabet-navigation
