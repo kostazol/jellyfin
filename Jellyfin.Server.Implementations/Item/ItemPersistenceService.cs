@@ -9,6 +9,7 @@ using Jellyfin.Database.Implementations;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Extensions;
 using MediaBrowser.Controller;
+using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Persistence;
@@ -28,6 +29,7 @@ public class ItemPersistenceService : IItemPersistenceService
 {
     private readonly IDbContextFactory<JellyfinDbContext> _dbProvider;
     private readonly IServerApplicationHost _appHost;
+    private readonly IServerConfigurationManager _serverConfigurationManager;
     private readonly ILogger<ItemPersistenceService> _logger;
 
     /// <summary>
@@ -35,14 +37,17 @@ public class ItemPersistenceService : IItemPersistenceService
     /// </summary>
     /// <param name="dbProvider">The database context factory.</param>
     /// <param name="appHost">The application host.</param>
+    /// <param name="serverConfigurationManager">The server configuration manager.</param>
     /// <param name="logger">The logger.</param>
     public ItemPersistenceService(
         IDbContextFactory<JellyfinDbContext> dbProvider,
         IServerApplicationHost appHost,
+        IServerConfigurationManager serverConfigurationManager,
         ILogger<ItemPersistenceService> logger)
     {
         _dbProvider = dbProvider;
         _appHost = appHost;
+        _serverConfigurationManager = serverConfigurationManager;
         _logger = logger;
     }
 
@@ -261,7 +266,7 @@ public class ItemPersistenceService : IItemPersistenceService
 
         foreach (var item in tuples)
         {
-            var entity = BaseItemMapper.Map(item.Item, _appHost);
+            var entity = BaseItemMapper.Map(item.Item, _appHost, _serverConfigurationManager.Configuration);
             entity.TopParentId = item.TopParent?.Id;
 
             if (!existingItems.Contains(entity.Id))

@@ -113,7 +113,7 @@ public sealed partial class BaseItemRepository
     /// <returns>The mapped database entity.</returns>
     public BaseItemEntity Map(BaseItemDto dto)
     {
-        return BaseItemMapper.Map(dto, _appHost);
+        return BaseItemMapper.Map(dto, _appHost, _serverConfigurationManager.Configuration);
     }
 
     /// <summary>
