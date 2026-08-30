@@ -23,25 +23,29 @@ jobs:
           ref: feature/localized-alphabet-navigation
           fetch-depth: 0
 
-      - name: Remove mapper configuration fallback
+      - name: Align initial source with SortName semantics
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          path = Path('Jellyfin.Server.Implementations/Item/BaseItemMapper.cs')
-          text = path.read_text()
-          old = 'BaseItemDto.ConfigurationManager?.Configuration ?? new MediaBrowser.Model.Configuration.ServerConfiguration());'
-          new = 'BaseItemDto.ConfigurationManager.Configuration);'
+
+          mapper = Path('Jellyfin.Server.Implementations/Item/BaseItemMapper.cs')
+          text = mapper.read_text()
+          old = '            dto.ForcedSortName ?? dto.Name,\n'
+          new = '            !string.IsNullOrEmpty(dto.ForcedSortName) ? dto.ForcedSortName : dto.Name,\n'
           if old not in text:
-              raise SystemExit('Expected mapper fallback was not found')
-          path.write_text(text.replace(old, new))
+              raise SystemExit('Expected ForcedSortName source expression was not found')
+          mapper.write_text(text.replace(old, new, 1))
+
+          test = Path('tests/Jellyfin.Server.Implementations.Tests/Item/BaseItemMapperTests.cs')
+          test.write_text('''using System;\nusing Jellyfin.Server.Implementations.Item;\nusing MediaBrowser.Controller;\nusing MediaBrowser.Controller.Configuration;\nusing MediaBrowser.Controller.Entities;\nusing MediaBrowser.Controller.Entities.Movies;\nusing MediaBrowser.Model.Configuration;\nusing Moq;\nusing Xunit;\n\nnamespace Jellyfin.Server.Implementations.Tests.Item;\n\npublic class BaseItemMapperTests\n{\n    [Theory]\n    [InlineData(null, "ω")]\n    [InlineData("", "ω")]\n    [InlineData("Ψυχή", "ψ")]\n    public void Map_UsesEffectiveSortNameSourceForInitial(string? forcedSortName, string expected)\n    {\n        var configurationManager = new Mock<IServerConfigurationManager>();\n        configurationManager.SetupGet(manager => manager.Configuration).Returns(new ServerConfiguration());\n        BaseItem.ConfigurationManager = configurationManager.Object;\n\n        var item = new Movie\n        {\n            Id = Guid.NewGuid(),\n            Name = "Ωμέγα",\n            ForcedSortName = forcedSortName\n        };\n\n        var entity = BaseItemMapper.Map(item, Mock.Of<IServerApplicationHost>());\n\n        Assert.Equal(expected, entity.SortNameInitial);\n    }\n}\n''')
           PY
 
       - name: Rebase on current upstream master
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Jellyfin.Server.Implementations/Item/BaseItemMapper.cs
-          git commit -m "refactor: use configured sort rules when mapping initials"
+          git add Jellyfin.Server.Implementations/Item/BaseItemMapper.cs tests/Jellyfin.Server.Implementations.Tests/Item/BaseItemMapperTests.cs
+          git commit -m "test: align native initial with effective sort-name source"
           git remote add upstream https://github.com/jellyfin/jellyfin.git
           git fetch upstream master
           git rebase upstream/master
