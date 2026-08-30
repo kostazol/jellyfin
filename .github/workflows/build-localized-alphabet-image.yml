@@ -99,13 +99,45 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push test image
+      - name: Build test image locally
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.runtime-test
-          push: true
+          load: true
           platforms: linux/amd64
           tags: |
             ghcr.io/kostazol/jellyfin-localized-alphabet:test
             ghcr.io/kostazol/jellyfin-localized-alphabet:server-${{ steps.versions.outputs.server }}-web-${{ steps.versions.outputs.web }}
+
+      - name: Smoke test Jellyfin container
+        run: |
+          set -euo pipefail
+          docker run -d --name jellyfin-localized-smoke -p 18096:8096 \
+            ghcr.io/kostazol/jellyfin-localized-alphabet:test
+          cleanup() {
+            docker logs jellyfin-localized-smoke || true
+            docker rm -f jellyfin-localized-smoke || true
+          }
+          trap cleanup EXIT
+
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error http://127.0.0.1:18096/health >/dev/null; then
+              echo "Jellyfin health endpoint is ready"
+              curl --fail --silent --show-error http://127.0.0.1:18096/web/index.html >/dev/null
+              exit 0
+            fi
+            if ! docker inspect -f '{{.State.Running}}' jellyfin-localized-smoke | grep -q true; then
+              echo "Jellyfin container exited before becoming healthy"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          echo "Jellyfin did not become healthy within the timeout"
+          exit 1
+
+      - name: Push validated image
+        run: |
+          docker push ghcr.io/kostazol/jellyfin-localized-alphabet:test
+          docker push ghcr.io/kostazol/jellyfin-localized-alphabet:server-${{ steps.versions.outputs.server }}-web-${{ steps.versions.outputs.web }}
