@@ -15,6 +15,7 @@ using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.LiveTv;
+using MediaBrowser.Model.Configuration;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.LiveTv;
 using Microsoft.Extensions.Logging;
@@ -221,6 +222,19 @@ public static class BaseItemMapper
     /// <param name="appHost">The application host for path resolution.</param>
     /// <returns>The database entity.</returns>
     public static BaseItemEntity Map(BaseItemDto dto, IServerApplicationHost appHost)
+        => Map(dto, appHost, BaseItemDto.ConfigurationManager.Configuration);
+
+    /// <summary>
+    /// Maps a domain item to its database entity using the supplied sort configuration.
+    /// </summary>
+    /// <param name="dto">The DTO.</param>
+    /// <param name="appHost">The application host for path resolution.</param>
+    /// <param name="configuration">The server configuration used by the sort-name pipeline.</param>
+    /// <returns>The database entity.</returns>
+    public static BaseItemEntity Map(
+        BaseItemDto dto,
+        IServerApplicationHost appHost,
+        ServerConfiguration configuration)
     {
         var dtoType = dto.GetType();
         var entity = new BaseItemEntity()
@@ -252,7 +266,7 @@ public static class BaseItemMapper
         entity.SortNameInitial = BaseItemDto.GetSortNameInitial(
             !string.IsNullOrEmpty(dto.ForcedSortName) ? dto.ForcedSortName : dto.Name,
             dto.EnableAlphaNumericSorting,
-            BaseItemDto.ConfigurationManager.Configuration);
+            configuration);
         entity.ForcedSortName = dto.ForcedSortName;
         entity.RunTimeTicks = dto.RunTimeTicks;
         entity.PreferredMetadataLanguage = dto.PreferredMetadataLanguage;
