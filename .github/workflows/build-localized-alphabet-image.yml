@@ -126,20 +126,22 @@ jobs:
           }
           trap cleanup EXIT
 
-          for attempt in $(seq 1 60); do
-            if curl --fail --silent --show-error http://127.0.0.1:18096/health >/dev/null; then
-              echo "Jellyfin health endpoint is ready"
-              curl --fail --silent --show-error http://127.0.0.1:18096/web/index.html >/dev/null
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent http://127.0.0.1:18096/health >/dev/null 2>&1 \
+              && curl --fail --silent http://127.0.0.1:18096/web/index.html >/dev/null 2>&1; then
+              echo "Jellyfin health and web endpoints are ready"
               exit 0
             fi
+
             if ! docker inspect -f '{{.State.Running}}' jellyfin-localized-smoke | grep -q true; then
-              echo "Jellyfin container exited before becoming healthy"
+              echo "Jellyfin container exited before becoming ready"
               exit 1
             fi
+
             sleep 2
           done
 
-          echo "Jellyfin did not become healthy within the timeout"
+          echo "Jellyfin did not become fully ready within the timeout"
           exit 1
 
       - name: Push validated image
