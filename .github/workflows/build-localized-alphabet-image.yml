@@ -13,12 +13,9 @@ permissions:
 jobs:
   build-image:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
 
     steps:
-      - name: Checkout build branch
-        uses: actions/checkout@v4
-
       - name: Checkout Jellyfin server feature
         uses: actions/checkout@v4
         with:
@@ -33,6 +30,52 @@ jobs:
           ref: feature/localized-alphabet-navigation
           path: jellyfin-web
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: jellyfin-web/package-lock.json
+
+      - name: Build Jellyfin Web
+        working-directory: jellyfin-web
+        env:
+          JELLYFIN_VERSION: 12.0-localized-alphabet
+        run: |
+          npm ci --no-audit
+          npm run build:production
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish Jellyfin server
+        working-directory: jellyfin-server
+        run: >-
+          dotnet publish Jellyfin.Server/Jellyfin.Server.csproj
+          --runtime linux-x64
+          --configuration Release
+          --output ../out-server
+          --self-contained
+          -p:DebugSymbols=false
+          -p:DebugType=none
+
+      - name: Create runtime Dockerfile
+        run: |
+          cat > Dockerfile.runtime-test <<'EOF'
+          FROM jellyfin/jellyfin:12.0-rc5
+          USER root
+          RUN rm -rf /jellyfin/*
+          COPY out-server /jellyfin
+          COPY jellyfin-web/dist /jellyfin/jellyfin-web
+          RUN chmod +x /jellyfin/jellyfin
+          LABEL org.opencontainers.image.source="https://github.com/kostazol/jellyfin"
+          LABEL org.opencontainers.image.description="Jellyfin 12 localized alphabet navigation test image"
+          LABEL org.opencontainers.image.revision.server="131759a99b42174b8caa1cab9ae2a4a858351cbf"
+          LABEL org.opencontainers.image.revision.web="22feeefa358364e1192ed6ac6b671f42b2680e6f"
+          EOF
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -43,18 +86,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push rc5-based test image
+      - name: Build and push test image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.localized-alphabet-test
+          file: Dockerfile.runtime-test
           push: true
           platforms: linux/amd64
           tags: |
             ghcr.io/kostazol/jellyfin-localized-alphabet:test-rc5
             ghcr.io/kostazol/jellyfin-localized-alphabet:rc5-server-131759a-web-22feeef
-          build-args: |
-            JELLYFIN_VERSION=12.0-localized-alphabet
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
