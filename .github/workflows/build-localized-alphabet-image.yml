@@ -1,6 +1,11 @@
 name: Build localized alphabet Jellyfin image
 
 on:
+  push:
+    branches:
+      - build/localized-alphabet-image
+    paths:
+      - .github/workflows/build-localized-alphabet-image.yml
   workflow_dispatch:
 
 permissions:
