@@ -1,6 +1,9 @@
 name: Build localized alphabet Jellyfin image
 
 on:
+  push:
+    branches:
+      - build/localized-alphabet-image
   workflow_dispatch:
 
 permissions:
