@@ -6,6 +6,7 @@ on:
       - build/localized-alphabet-image
     paths:
       - scripts/apply-localized-alphabet-v2-server.py
+      - scripts/fix-localized-alphabet-v2-server.py
       - .github/workflows/apply-localized-alphabet-v2-server.yml
   workflow_dispatch:
 
@@ -34,7 +35,9 @@ jobs:
 
       - name: Apply v2 server patch
         working-directory: server
-        run: python3 ../helper/scripts/apply-localized-alphabet-v2-server.py
+        run: |
+          python3 ../helper/scripts/apply-localized-alphabet-v2-server.py
+          python3 ../helper/scripts/fix-localized-alphabet-v2-server.py
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -66,6 +69,7 @@ jobs:
             MediaBrowser.Model/System/SystemInfo.cs \
             Emby.Server.Implementations/SystemManager.cs \
             MediaBrowser.Controller/Entities/InternalItemsQuery.cs \
+            Jellyfin.Server.Implementations/Item/BaseItemMapper.cs \
             Jellyfin.Server.Implementations/Item/BaseItemRepository.ByName.cs \
             Jellyfin.Server.Implementations/Item/BaseItemRepository.QueryBuilding.cs \
             Jellyfin.Api/Controllers/ArtistsController.cs \
