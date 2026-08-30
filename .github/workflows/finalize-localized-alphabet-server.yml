@@ -1,0 +1,74 @@
+name: Finalize localized alphabet server branch
+
+on:
+  push:
+    branches:
+      - build/localized-alphabet-image
+    paths:
+      - .github/workflows/finalize-localized-alphabet-server.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          repository: kostazol/jellyfin
+          ref: feature/localized-alphabet-navigation
+          fetch-depth: 0
+
+      - name: Remove mapper configuration fallback
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('Jellyfin.Server.Implementations/Item/BaseItemMapper.cs')
+          text = path.read_text()
+          old = 'BaseItemDto.ConfigurationManager?.Configuration ?? new MediaBrowser.Model.Configuration.ServerConfiguration());'
+          new = 'BaseItemDto.ConfigurationManager.Configuration);'
+          if old not in text:
+              raise SystemExit('Expected mapper fallback was not found')
+          path.write_text(text.replace(old, new))
+          PY
+
+      - name: Rebase on current upstream master
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Jellyfin.Server.Implementations/Item/BaseItemMapper.cs
+          git commit -m "refactor: use configured sort rules when mapping initials"
+          git remote add upstream https://github.com/jellyfin/jellyfin.git
+          git fetch upstream master
+          git rebase upstream/master
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Verify upstream formatting
+        run: dotnet format --verify-no-changes --verbosity minimal
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore
+
+      - name: Test controller
+        run: dotnet test tests/Jellyfin.Controller.Tests/Jellyfin.Controller.Tests.csproj --no-build --no-restore
+
+      - name: Test server implementations
+        run: dotnet test tests/Jellyfin.Server.Implementations.Tests/Jellyfin.Server.Implementations.Tests.csproj --no-build --no-restore
+
+      - name: Squash and publish feature branch
+        run: |
+          git reset --soft upstream/master
+          git commit -m "feat(api): add localized alphabet navigation support"
+          git diff --check upstream/master..HEAD
+          git push --force-with-lease origin HEAD:feature/localized-alphabet-navigation
