@@ -1,0 +1,82 @@
+name: Apply localized alphabet v2 server changes
+
+on:
+  push:
+    branches:
+      - build/localized-alphabet-image
+    paths:
+      - scripts/apply-localized-alphabet-v2-server.py
+      - .github/workflows/apply-localized-alphabet-v2-server.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout server feature branch
+        uses: actions/checkout@v4
+        with:
+          repository: kostazol/jellyfin
+          ref: feature/localized-alphabet-navigation
+          fetch-depth: 0
+          path: server
+
+      - name: Checkout helper branch
+        uses: actions/checkout@v4
+        with:
+          repository: kostazol/jellyfin
+          ref: build/localized-alphabet-image
+          path: helper
+
+      - name: Apply v2 server patch
+        working-directory: server
+        run: python3 ../helper/scripts/apply-localized-alphabet-v2-server.py
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        working-directory: server
+        run: dotnet restore
+
+      - name: Build
+        working-directory: server
+        run: dotnet build --no-restore
+
+      - name: Test controller
+        working-directory: server
+        run: dotnet test tests/Jellyfin.Controller.Tests/Jellyfin.Controller.Tests.csproj --no-build --no-restore
+
+      - name: Test server implementations
+        working-directory: server
+        run: dotnet test tests/Jellyfin.Server.Implementations.Tests/Jellyfin.Server.Implementations.Tests.csproj --no-build --no-restore
+
+      - name: Commit validated server changes
+        working-directory: server
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            MediaBrowser.Model/Configuration/ServerConfiguration.cs \
+            MediaBrowser.Model/System/SystemInfo.cs \
+            Emby.Server.Implementations/SystemManager.cs \
+            MediaBrowser.Controller/Entities/InternalItemsQuery.cs \
+            Jellyfin.Server.Implementations/Item/BaseItemRepository.ByName.cs \
+            Jellyfin.Server.Implementations/Item/BaseItemRepository.QueryBuilding.cs \
+            Jellyfin.Api/Controllers/ArtistsController.cs \
+            Jellyfin.Api/Controllers/GenresController.cs \
+            Jellyfin.Api/Controllers/ItemsController.cs \
+            Jellyfin.Api/Controllers/MusicGenresController.cs \
+            Jellyfin.Api/Controllers/StudiosController.cs \
+            Jellyfin.Api/Controllers/TrailersController.cs
+          if git diff --cached --quiet; then
+            echo "No server changes to commit"
+          else
+            git commit -m "feat(api): add global localized alphabet ordering"
+            git push origin HEAD:feature/localized-alphabet-navigation
+          fi
