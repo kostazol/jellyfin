@@ -1,0 +1,110 @@
+name: Fix PR 17742 explicit sort configuration
+
+on:
+  push:
+    branches:
+      - build/localized-alphabet-image
+    paths:
+      - scripts/fix-pr17742-explicit-sort-config.py
+      - .github/workflows/fix-pr17742-explicit-sort-config.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout tooling branch
+        uses: actions/checkout@v4
+        with:
+          ref: build/localized-alphabet-image
+          path: tooling
+
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/localized-alphabet-navigation
+          fetch-depth: 0
+          path: source
+
+      - name: Apply explicit configuration fix and restore migration style
+        working-directory: source
+        run: |
+          python3 ../tooling/scripts/fix-pr17742-explicit-sort-config.py
+          git checkout 2987f51555d8e249ebfcf1b4561a317b3dbcc32e -- Jellyfin.Server/Migrations/Routines/20260829190000_RefreshSortNameInitials.cs
+          git diff --check
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Verify formatting
+        working-directory: source
+        run: dotnet format --verify-no-changes --verbosity minimal
+
+      - name: Restore
+        working-directory: source
+        run: dotnet restore
+
+      - name: Build
+        working-directory: source
+        run: dotnet build --no-restore
+
+      - name: Test controller
+        working-directory: source
+        run: dotnet test tests/Jellyfin.Controller.Tests/Jellyfin.Controller.Tests.csproj --no-build --no-restore
+
+      - name: Test server implementations twice
+        working-directory: source
+        run: |
+          dotnet test tests/Jellyfin.Server.Implementations.Tests/Jellyfin.Server.Implementations.Tests.csproj --no-build --no-restore
+          dotnet test tests/Jellyfin.Server.Implementations.Tests/Jellyfin.Server.Implementations.Tests.csproj --no-build --no-restore
+
+      - name: Exercise dependency injection, startup migrations and OpenAPI
+        working-directory: source
+        run: dotnet test tests/Jellyfin.Server.Integration.Tests/Jellyfin.Server.Integration.Tests.csproj -c Release --filter Jellyfin.Server.Integration.Tests.OpenApiSpecTests
+
+      - name: Verify flattened OpenAPI parameters
+        working-directory: source
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          spec_path = Path('tests/Jellyfin.Server.Integration.Tests/bin/Release/net10.0/openapi.json')
+          spec = json.loads(spec_path.read_text())
+          names = []
+          for path_item in spec.get('paths', {}).values():
+              for operation in path_item.values():
+                  if not isinstance(operation, dict):
+                      continue
+                  for parameter in operation.get('parameters', []):
+                      if isinstance(parameter, dict) and 'name' in parameter:
+                          names.append(parameter['name'])
+
+          required = {'nameInitials', 'excludeNameInitials', 'nameInitialSortOrder'}
+          missing = required.difference(names)
+          if missing:
+              raise SystemExit(f'Missing flattened OpenAPI parameters: {sorted(missing)}')
+          if 'nameInitialQuery' in names:
+              raise SystemExit('NameInitialQuery leaked into OpenAPI')
+          PY
+
+      - name: Commit and push fix
+        working-directory: source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            Jellyfin.Server.Implementations/Item/BaseItemMapper.cs \
+            Jellyfin.Server.Implementations/Item/BaseItemRepository.cs \
+            Jellyfin.Server.Implementations/Item/ItemPersistenceService.cs \
+            Jellyfin.Server/Migrations/Routines/20260829190000_RefreshSortNameInitials.cs \
+            tests/Jellyfin.Server.Implementations.Tests/Item/BaseItemMapperTests.cs \
+            tests/Jellyfin.Server.Implementations.Tests/Item/ItemPersistenceOwnedRowTests.cs
+          git commit -m "Pass sort configuration explicitly when mapping items"
+          git push origin HEAD:feature/localized-alphabet-navigation
