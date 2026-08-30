@@ -7,6 +7,7 @@ on:
     paths:
       - scripts/apply-localized-alphabet-v2-server.py
       - scripts/fix-localized-alphabet-v2-server.py
+      - scripts/preserve-localized-alphabet-order.py
       - .github/workflows/apply-localized-alphabet-v2-server.yml
   workflow_dispatch:
 
@@ -38,6 +39,7 @@ jobs:
         run: |
           python3 ../helper/scripts/apply-localized-alphabet-v2-server.py
           python3 ../helper/scripts/fix-localized-alphabet-v2-server.py
+          python3 ../helper/scripts/preserve-localized-alphabet-order.py
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -81,6 +83,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No server changes to commit"
           else
-            git commit -m "feat(api): add global localized alphabet ordering"
+            git commit -m "fix(api): preserve localized alphabet order"
             git push origin HEAD:feature/localized-alphabet-navigation
           fi
