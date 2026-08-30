@@ -27,6 +27,23 @@ jobs:
           ref: feature/localized-alphabet-navigation
           path: jellyfin-web
 
+      - name: Checkout test image helpers
+        uses: actions/checkout@v4
+        with:
+          repository: kostazol/jellyfin
+          ref: build/localized-alphabet-image
+          path: build-helper
+
+      - name: Capture feature versions
+        id: versions
+        run: |
+          echo "server=$(git -C jellyfin-server rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "web=$(git -C jellyfin-web rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore rc5 alpha picker DOM for test image
+        working-directory: jellyfin-web
+        run: python3 ../build-helper/scripts/make-picker-rc5-compatible.py
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -40,6 +57,7 @@ jobs:
           JELLYFIN_VERSION: 12.0-localized-alphabet
         run: |
           npm ci --no-audit
+          npm run build:check
           npm run build:production
 
       - name: Set up .NET
@@ -88,4 +106,6 @@ jobs:
           file: Dockerfile.runtime-test
           push: true
           platforms: linux/amd64
-          tags: ghcr.io/kostazol/jellyfin-localized-alphabet:test
+          tags: |
+            ghcr.io/kostazol/jellyfin-localized-alphabet:test
+            ghcr.io/kostazol/jellyfin-localized-alphabet:server-${{ steps.versions.outputs.server }}-web-${{ steps.versions.outputs.web }}
