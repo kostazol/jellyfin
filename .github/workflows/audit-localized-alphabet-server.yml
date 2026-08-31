@@ -9,6 +9,7 @@ on:
       - scripts/audit-localized-alphabet-server-followup.py
       - scripts/audit-localized-alphabet-server-final.py
       - scripts/audit-localized-alphabet-server-order-direction.py
+      - scripts/audit-localized-alphabet-server-cleanup.py
       - .github/workflows/audit-localized-alphabet-server.yml
   workflow_dispatch:
 
@@ -61,6 +62,7 @@ jobs:
           python3 ../tooling/scripts/audit-localized-alphabet-server-followup.py .
           python3 ../tooling/scripts/audit-localized-alphabet-server-final.py .
           python3 ../tooling/scripts/audit-localized-alphabet-server-order-direction.py .
+          python3 ../tooling/scripts/audit-localized-alphabet-server-cleanup.py .
           git rm Jellyfin.Api/Models/NameInitialQuery.cs
 
       - name: Set up .NET
@@ -152,7 +154,7 @@ jobs:
       - name: Build final branch
         working-directory: source
         run: |
-          dotnet clean Jellyfin.sln --no-restore --verbosity quiet
+          dotnet clean Jellyfin.sln --verbosity quiet
           if ! dotnet build Jellyfin.sln --no-restore --verbosity minimal 2>&1 | tee /tmp/final-build.log; then
             echo "==== concise final build errors ===="
             grep -E '(^|: )(error [A-Z]+[0-9]+:|error:)' /tmp/final-build.log || true
