@@ -151,7 +151,13 @@ jobs:
 
       - name: Build final branch
         working-directory: source
-        run: dotnet build Jellyfin.sln --no-restore --verbosity minimal
+        run: |
+          dotnet clean Jellyfin.sln --no-restore --verbosity quiet
+          if ! dotnet build Jellyfin.sln --no-restore --verbosity minimal 2>&1 | tee /tmp/final-build.log; then
+            echo "==== concise final build errors ===="
+            grep -E '(^|: )(error [A-Z]+[0-9]+:|error:)' /tmp/final-build.log || true
+            exit 1
+          fi
 
       - name: Test controller project
         working-directory: source
