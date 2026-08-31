@@ -1,0 +1,183 @@
+name: Audit localized alphabet server branch
+
+on:
+  push:
+    branches:
+      - build/localized-alphabet-image
+    paths:
+      - scripts/audit-localized-alphabet-server.py
+      - .github/workflows/audit-localized-alphabet-server.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  EXPECTED_FEATURE_HEAD: b2b59e4fe49dbdba26e00d8c1ae85f2cd7d1a58a
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout audit tooling
+        uses: actions/checkout@v4
+        with:
+          ref: build/localized-alphabet-image
+          path: tooling
+
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/localized-alphabet-navigation
+          fetch-depth: 0
+          path: source
+
+      - name: Verify remote feature head
+        working-directory: source
+        run: |
+          REMOTE_HEAD=$(git ls-remote origin refs/heads/feature/localized-alphabet-navigation | cut -f1)
+          test "$REMOTE_HEAD" = "$EXPECTED_FEATURE_HEAD" || {
+            echo "Feature branch moved unexpectedly: $REMOTE_HEAD"
+            exit 1
+          }
+
+      - name: Rebase on current upstream master
+        working-directory: source
+        run: |
+          git config user.name "kostazol"
+          git config user.email "kottik06@gmail.com"
+          git remote add upstream https://github.com/jellyfin/jellyfin.git
+          git fetch upstream master
+          git rebase upstream/master
+
+      - name: Apply audit fixes and tests
+        working-directory: source
+        run: |
+          python3 ../tooling/scripts/audit-localized-alphabet-server.py .
+          git rm Jellyfin.Api/Models/NameInitialQuery.cs
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        working-directory: source
+        run: dotnet restore
+
+      - name: Apply project formatter
+        working-directory: source
+        run: |
+          dotnet format --no-restore --verbosity minimal
+          git diff --check
+
+      - name: Rewrite feature history into reviewable commits
+        working-directory: source
+        run: |
+          git reset --mixed upstream/master
+
+          git add \
+            Jellyfin.Server.Implementations/Item/BaseItemMapper.cs \
+            Jellyfin.Server.Implementations/Item/BaseItemRepository.cs \
+            Jellyfin.Server.Implementations/Item/ItemPersistenceService.cs \
+            Jellyfin.Server/Migrations/Routines/20260829190000_RefreshSortNameInitials.cs \
+            MediaBrowser.Controller/Entities/BaseItem.cs \
+            src/Jellyfin.Database/Jellyfin.Database.Implementations/Entities/BaseItemEntity.cs \
+            src/Jellyfin.Database/Jellyfin.Database.Implementations/ModelConfiguration/BaseItemConfiguration.cs \
+            src/Jellyfin.Database/Jellyfin.Database.Providers.Sqlite/Migrations/20260829125247_AddSortNameInitial.Designer.cs \
+            src/Jellyfin.Database/Jellyfin.Database.Providers.Sqlite/Migrations/20260829125247_AddSortNameInitial.cs \
+            src/Jellyfin.Database/Jellyfin.Database.Providers.Sqlite/Migrations/JellyfinDbModelSnapshot.cs \
+            tests/Jellyfin.Controller.Tests/Entities/BaseItemTests.cs \
+            tests/Jellyfin.Server.Implementations.Tests/Item/BaseItemMapperTests.cs \
+            tests/Jellyfin.Server.Implementations.Tests/Item/ItemPersistenceOwnedRowTests.cs \
+            tests/Jellyfin.Server.Integration.Tests/Migrations/SortNameInitialMigrationTests.cs
+          git commit -m "Preserve native sort-name initials"
+
+          git add \
+            Jellyfin.Server.Implementations/Item/BaseItemRepository.ByName.cs \
+            Jellyfin.Server.Implementations/Item/BaseItemRepository.QueryBuilding.cs \
+            MediaBrowser.Controller/Entities/InternalItemsQuery.cs \
+            tests/Jellyfin.Server.Implementations.Tests/Item/BaseItemRepositoryNameInitialTests.cs
+          git commit -m "Add native-initial item querying"
+
+          git add \
+            Jellyfin.Api/Controllers/ArtistsController.cs \
+            Jellyfin.Api/Controllers/GenresController.cs \
+            Jellyfin.Api/Controllers/ItemsController.cs \
+            Jellyfin.Api/Controllers/MusicGenresController.cs \
+            Jellyfin.Api/Controllers/StudiosController.cs \
+            Jellyfin.Api/Controllers/TrailersController.cs \
+            Jellyfin.Api/Helpers/RequestHelpers.cs
+          git commit -m "Expose native-initial query parameters"
+
+          git add \
+            Emby.Server.Implementations/SystemManager.cs \
+            MediaBrowser.Model/Configuration/ServerConfiguration.cs \
+            MediaBrowser.Model/System/SystemInfo.cs
+          git commit -m "Expose localized alphabet navigation settings"
+
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Uncommitted or unstaged feature changes remain:"
+            git status --short
+            exit 1
+          fi
+          git diff --check upstream/master..HEAD
+
+      - name: Verify every feature commit builds
+        working-directory: source
+        run: |
+          FEATURE_BRANCH=$(git branch --show-current)
+          for COMMIT in $(git rev-list --reverse upstream/master..HEAD); do
+            echo "Building $COMMIT $(git show -s --format=%s $COMMIT)"
+            git checkout --detach "$COMMIT"
+            dotnet build Jellyfin.sln --no-restore --verbosity minimal
+          done
+          git checkout "$FEATURE_BRANCH"
+
+      - name: Verify formatting
+        working-directory: source
+        run: dotnet format --verify-no-changes --no-restore --verbosity minimal
+
+      - name: Build final branch
+        working-directory: source
+        run: dotnet build Jellyfin.sln --no-restore --verbosity minimal
+
+      - name: Test controller project
+        working-directory: source
+        run: dotnet test tests/Jellyfin.Controller.Tests/Jellyfin.Controller.Tests.csproj --no-build --no-restore --verbosity minimal
+
+      - name: Test server implementations project
+        working-directory: source
+        run: dotnet test tests/Jellyfin.Server.Implementations.Tests/Jellyfin.Server.Implementations.Tests.csproj --no-build --no-restore --verbosity minimal
+
+      - name: Generate OpenAPI specification
+        working-directory: source
+        run: dotnet test tests/Jellyfin.Server.Integration.Tests/Jellyfin.Server.Integration.Tests.csproj --configuration Release --filter Jellyfin.Server.Integration.Tests.OpenApiSpecTests --verbosity minimal
+
+      - name: Run official solution test command
+        working-directory: source
+        run: >-
+          dotnet test Jellyfin.sln
+          --configuration Release
+          --collect:"XPlat Code Coverage"
+          --settings tests/coverletArgs.runsettings
+          --verbosity minimal
+
+      - name: Verify final author and commit structure
+        working-directory: source
+        run: |
+          git log --format=fuller upstream/master..HEAD
+          test "$(git rev-list --count upstream/master..HEAD)" -eq 4
+          test -z "$(git log --format='%an <%ae>%n%cn <%ce>' upstream/master..HEAD | grep -v '^kostazol <kottik06@gmail.com>$' || true)"
+          test -z "$(git log --format='%s' upstream/master..HEAD | grep -E '^(feat|fix|chore|refactor|test|style|ci)(\(.+\))?:' || true)"
+
+      - name: Publish audited feature history
+        working-directory: source
+        run: |
+          REMOTE_HEAD=$(git ls-remote origin refs/heads/feature/localized-alphabet-navigation | cut -f1)
+          test "$REMOTE_HEAD" = "$EXPECTED_FEATURE_HEAD" || {
+            echo "Feature branch changed while validation was running: $REMOTE_HEAD"
+            exit 1
+          }
+          git push --force-with-lease=refs/heads/feature/localized-alphabet-navigation:$EXPECTED_FEATURE_HEAD origin HEAD:feature/localized-alphabet-navigation
