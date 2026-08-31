@@ -7,6 +7,7 @@ on:
     paths:
       - scripts/audit-localized-alphabet-server.py
       - scripts/audit-localized-alphabet-server-followup.py
+      - scripts/audit-localized-alphabet-server-final.py
       - .github/workflows/audit-localized-alphabet-server.yml
   workflow_dispatch:
 
@@ -57,6 +58,7 @@ jobs:
         run: |
           python3 ../tooling/scripts/audit-localized-alphabet-server.py .
           python3 ../tooling/scripts/audit-localized-alphabet-server-followup.py .
+          python3 ../tooling/scripts/audit-localized-alphabet-server-final.py .
           git rm Jellyfin.Api/Models/NameInitialQuery.cs
 
       - name: Set up .NET
@@ -152,6 +154,10 @@ jobs:
       - name: Test server implementations project
         working-directory: source
         run: dotnet test tests/Jellyfin.Server.Implementations.Tests/Jellyfin.Server.Implementations.Tests.csproj --no-build --no-restore --verbosity minimal
+
+      - name: Test localized alphabet migration specifically
+        working-directory: source
+        run: dotnet test tests/Jellyfin.Server.Integration.Tests/Jellyfin.Server.Integration.Tests.csproj --configuration Release --filter FullyQualifiedName~SortNameInitialMigrationTests --verbosity minimal
 
       - name: Generate OpenAPI specification
         working-directory: source
