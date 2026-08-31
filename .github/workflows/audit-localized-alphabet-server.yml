@@ -137,7 +137,11 @@ jobs:
           for COMMIT in $(git rev-list --reverse upstream/master..HEAD); do
             echo "Building $COMMIT $(git show -s --format=%s $COMMIT)"
             git checkout --detach "$COMMIT"
-            dotnet build Jellyfin.sln --no-restore --verbosity minimal
+            if ! dotnet build Jellyfin.sln --no-restore --verbosity minimal 2>&1 | tee /tmp/build.log; then
+              echo "==== concise build errors for $COMMIT ===="
+              grep -E '(^|: )(error [A-Z]+[0-9]+:|error:)' /tmp/build.log || true
+              exit 1
+            fi
           done
           git checkout "$FEATURE_BRANCH"
 
