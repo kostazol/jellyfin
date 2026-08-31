@@ -6,6 +6,7 @@ on:
       - build/localized-alphabet-image
     paths:
       - scripts/audit-localized-alphabet-server.py
+      - scripts/audit-localized-alphabet-server-followup.py
       - .github/workflows/audit-localized-alphabet-server.yml
   workflow_dispatch:
 
@@ -55,6 +56,7 @@ jobs:
         working-directory: source
         run: |
           python3 ../tooling/scripts/audit-localized-alphabet-server.py .
+          python3 ../tooling/scripts/audit-localized-alphabet-server-followup.py .
           git rm Jellyfin.Api/Models/NameInitialQuery.cs
 
       - name: Set up .NET
