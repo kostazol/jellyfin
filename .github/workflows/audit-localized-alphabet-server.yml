@@ -8,6 +8,7 @@ on:
       - scripts/audit-localized-alphabet-server.py
       - scripts/audit-localized-alphabet-server-followup.py
       - scripts/audit-localized-alphabet-server-final.py
+      - scripts/audit-localized-alphabet-server-order-direction.py
       - .github/workflows/audit-localized-alphabet-server.yml
   workflow_dispatch:
 
@@ -59,6 +60,7 @@ jobs:
           python3 ../tooling/scripts/audit-localized-alphabet-server.py .
           python3 ../tooling/scripts/audit-localized-alphabet-server-followup.py .
           python3 ../tooling/scripts/audit-localized-alphabet-server-final.py .
+          python3 ../tooling/scripts/audit-localized-alphabet-server-order-direction.py .
           git rm Jellyfin.Api/Models/NameInitialQuery.cs
 
       - name: Set up .NET
