@@ -1,0 +1,226 @@
+diff --git a/Jellyfin.Api/Models/NameInitialQuery.cs b/Jellyfin.Api/Models/NameInitialQuery.cs
+index 388fd98..d43d8da 100644
+--- a/Jellyfin.Api/Models/NameInitialQuery.cs
++++ b/Jellyfin.Api/Models/NameInitialQuery.cs
+@@ -25,7 +25,8 @@ public class NameInitialQuery
+     public IReadOnlyList<string> ExcludeNameInitials { get; set; } = [];
+ 
+     /// <summary>
+-    /// Gets or sets the ordered initials used to group SortName or Name ordering.
++    /// Gets or sets the ordered initial groups used for SortName or Name ordering.
++    /// Separate groups with commas and aliases within a group with a pipe (for example, Α|Ά,Β).
+     /// </summary>
+     [FromQuery(Name = "nameInitialSortOrder")]
+     [ModelBinder(typeof(CommaDelimitedCollectionModelBinder))]
+diff --git a/Jellyfin.Server.Implementations/Item/BaseItemRepository.QueryBuilding.cs b/Jellyfin.Server.Implementations/Item/BaseItemRepository.QueryBuilding.cs
+index f00c811..36b1c98 100644
+--- a/Jellyfin.Server.Implementations/Item/BaseItemRepository.QueryBuilding.cs
++++ b/Jellyfin.Server.Implementations/Item/BaseItemRepository.QueryBuilding.cs
+@@ -437,10 +437,14 @@ public sealed partial class BaseItemRepository
+ 
+         for (var index = initials.Count - 1; index >= 0; index--)
+         {
+-            rank = Expression.Condition(
+-                Expression.Equal(initial, Expression.Constant(initials[index], typeof(string))),
+-                Expression.Constant(index + 1),
+-                rank);
++            var aliases = NormalizeNameInitials(initials[index].Split('|', StringSplitOptions.RemoveEmptyEntries));
++            Expression matches = Expression.Constant(false);
++            foreach (var alias in aliases)
++            {
++                matches = Expression.OrElse(matches, Expression.Equal(initial, Expression.Constant(alias, typeof(string))));
++            }
++
++            rank = Expression.Condition(matches, Expression.Constant(index + 1), rank);
+         }
+ 
+         return Expression.Lambda<Func<BaseItemEntity, int>>(rank, entity);
+diff --git a/tests/Jellyfin.Server.Implementations.Tests/Item/BaseItemMapperTests.cs b/tests/Jellyfin.Server.Implementations.Tests/Item/BaseItemMapperTests.cs
+index 3e551f7..cc6893d 100644
+--- a/tests/Jellyfin.Server.Implementations.Tests/Item/BaseItemMapperTests.cs
++++ b/tests/Jellyfin.Server.Implementations.Tests/Item/BaseItemMapperTests.cs
+@@ -20,11 +20,13 @@ public class BaseItemMapperTests
+         {
+             Id = Guid.NewGuid(),
+             Name = "Ωμέγα",
+-            ForcedSortName = forcedSortName
++            ForcedSortName = forcedSortName,
++            SortName = "cached sort name"
+         };
+ 
+         var entity = BaseItemMapper.Map(item, Mock.Of<IServerApplicationHost>(), new ServerConfiguration());
+ 
+         Assert.Equal(expected, entity.SortNameInitial);
++        Assert.Equal(item.SortName, entity.SortName);
+     }
+ }
+diff --git a/tests/Jellyfin.Server.Implementations.Tests/Item/BaseItemRepositoryNameInitialTests.cs b/tests/Jellyfin.Server.Implementations.Tests/Item/BaseItemRepositoryNameInitialTests.cs
+new file mode 100644
+index 0000000..735c4f8
+--- /dev/null
++++ b/tests/Jellyfin.Server.Implementations.Tests/Item/BaseItemRepositoryNameInitialTests.cs
+@@ -0,0 +1,164 @@
++using System;
++using System.Linq;
++using Emby.Server.Implementations.Data;
++using Jellyfin.Data.Enums;
++using Jellyfin.Database.Implementations.Entities;
++using Jellyfin.Database.Implementations.Enums;
++using Jellyfin.Server.Implementations.Item;
++using MediaBrowser.Controller.Entities;
++using Xunit;
++
++namespace Jellyfin.Server.Implementations.Tests.Item;
++
++public sealed class BaseItemRepositoryNameInitialTests : SqliteDbTestFixture
++{
++    private readonly BaseItemRepository _repository;
++
++    public BaseItemRepositoryNameInitialTests()
++    {
++        _repository = CreateBaseItemRepository(new ItemTypeLookup());
++
++        using var context = CreateDbContext();
++        context.BaseItems.AddRange(
++            Item("Άλφα", "alpha", "ά"),
++            Item("Αύρα", "aura", "α"),
++            Item("Βήτα", "beta", "β"),
++            Item("Ωμέγα", "omega", "ω"),
++            Item("Ψυχή", "psyche", "ψ"),
++            Item("Other", "other", null));
++        context.SaveChanges();
++    }
++
++    [Theory]
++    [InlineData(SortOrder.Ascending, "Other,Άλφα,Αύρα,Βήτα,Ψυχή,Ωμέγα")]
++    [InlineData(SortOrder.Descending, "Ωμέγα,Ψυχή,Βήτα,Αύρα,Άλφα,Other")]
++    public void GetItems_GroupsAliasesBeforeApplyingSortName(SortOrder direction, string expected)
++    {
++        var query = CreateQuery(direction);
++
++        Assert.Equal(expected.Split(','), _repository.GetItems(query).Items.Select(item => item.Name));
++    }
++
++    [Fact]
++    public void GetItems_AppliesPagingAfterInitialOrdering()
++    {
++        var query = CreateQuery();
++        query.StartIndex = 3;
++        query.Limit = 2;
++        query.EnableTotalRecordCount = true;
++
++        var result = _repository.GetItems(query);
++
++        Assert.Equal(["Βήτα", "Ψυχή"], result.Items.Select(item => item.Name));
++        Assert.Equal(6, result.TotalRecordCount);
++    }
++
++    [Theory]
++    [InlineData(false, "Άλφα,Αύρα")]
++    [InlineData(true, "Βήτα,Ωμέγα,Other,Ψυχή")]
++    public void GetItems_FiltersNativeInitialsIncludingOther(bool exclude, string expected)
++    {
++        var query = CreateQuery();
++        query.NameInitialSortOrder = [];
++        if (exclude)
++        {
++            query.ExcludeNameInitials = ["Α", "Α\u0301"];
++        }
++        else
++        {
++            query.NameInitials = ["Α", "Α\u0301"];
++        }
++
++        Assert.Equal(expected.Split(','), _repository.GetItems(query).Items.Select(item => item.Name));
++    }
++
++    [Fact]
++    public void GetItems_WithoutNativeOrderingPreservesLegacySortName()
++    {
++        var query = CreateQuery();
++        query.NameInitialSortOrder = [];
++
++        Assert.Equal(
++            ["Άλφα", "Αύρα", "Βήτα", "Ωμέγα", "Other", "Ψυχή"],
++            _repository.GetItems(query).Items.Select(item => item.Name));
++    }
++
++    [Theory]
++    [InlineData(ItemSortBy.Name)]
++    [InlineData(ItemSortBy.SortName)]
++    public void ApplyOrder_GroupsAliasesForBothNameSorts(ItemSortBy sortBy)
++    {
++        using var context = CreateDbContext();
++        var query = CreateQuery();
++        query.OrderBy = [(sortBy, SortOrder.Ascending)];
++
++        var names = _repository.ApplyOrder(context.BaseItems, query, context).Select(item => item.Name).ToArray();
++
++        Assert.Equal("Other", names[0]);
++        Assert.Equal(new[] { "Άλφα", "Αύρα" }.Order(StringComparer.Ordinal), names.Skip(1).Take(2).Order(StringComparer.Ordinal));
++        Assert.Equal(["Βήτα", "Ψυχή", "Ωμέγα"], names.Skip(3));
++    }
++
++    [Fact]
++    public void ApplyOrder_PreservesNonNamePrimarySorting()
++    {
++        using var context = CreateDbContext();
++        var query = CreateQuery();
++        query.OrderBy = [(ItemSortBy.DateCreated, SortOrder.Ascending)];
++        var withInitials = _repository.ApplyOrder(context.BaseItems, query, context).Select(item => item.Id).ToArray();
++        query.NameInitialSortOrder = [];
++
++        Assert.Equal(withInitials, _repository.ApplyOrder(context.BaseItems, query, context).Select(item => item.Id));
++    }
++
++    [Fact]
++    public void ApplyOrder_PreservesSearchRelevance()
++    {
++        using var context = CreateDbContext();
++        var query = CreateQuery();
++        query.SearchTerm = "alpha";
++        var withInitials = _repository.ApplyOrder(context.BaseItems, query, context).Select(item => item.Id).ToArray();
++        query.NameInitialSortOrder = [];
++
++        Assert.Equal(withInitials, _repository.ApplyOrder(context.BaseItems, query, context).Select(item => item.Id));
++    }
++
++    [Fact]
++    public void GetItems_KeepsFlatInitialOrderingCompatible()
++    {
++        var query = CreateQuery();
++        query.NameInitialSortOrder = ["Α", "Ά", "Β", "Ψ", "Ω"];
++
++        Assert.Equal(
++            ["Other", "Αύρα", "Άλφα", "Βήτα", "Ψυχή", "Ωμέγα"],
++            _repository.GetItems(query).Items.Select(item => item.Name));
++    }
++
++    [Fact]
++    public void GetItems_NormalizesAliasesAndUsesTheirFirstGroup()
++    {
++        var query = CreateQuery();
++        query.NameInitialSortOrder = ["Α|Α\u0301|α", "Β|Α", "Ψ", "Ω", "||"];
++
++        Assert.Equal(
++            ["Other", "Άλφα", "Αύρα", "Βήτα", "Ψυχή", "Ωμέγα"],
++            _repository.GetItems(query).Items.Select(item => item.Name));
++    }
++
++    private static InternalItemsQuery CreateQuery(SortOrder direction = SortOrder.Ascending) => new()
++    {
++        IncludeItemTypes = [BaseItemKind.Movie],
++        OrderBy = [(ItemSortBy.SortName, direction)],
++        NameInitialSortOrder = ["Α|Ά", "Β", "Ψ", "Ω|Ώ"]
++    };
++
++    private static BaseItemEntity Item(string name, string sortName, string? initial) => new()
++    {
++        Id = Guid.NewGuid(),
++        PresentationUniqueKey = Guid.NewGuid().ToString("N"),
++        Type = typeof(MediaBrowser.Controller.Entities.Movies.Movie).FullName!,
++        Name = name,
++        SortName = sortName,
++        SortNameInitial = initial
++    };
++}

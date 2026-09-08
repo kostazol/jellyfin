@@ -1,41 +1,66 @@
 name: Localized alphabet audit
 on:
   push:
-    branches:
-      - audit/localized-alphabet-20260908
+    branches: [audit/localized-alphabet-20260908]
 permissions:
   contents: read
 jobs:
-  source:
+  prepare:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: b2b59e4fe49dbdba26e00d8c1ae85f2cd7d1a58a
-          path: server
+          path: audit
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: kostazol/jellyfin-web
-          ref: 459fd45b6cb75bb0233b4c8be0f6f6548d5e6f69
-          path: web
-          persist-credentials: false
-      - run: tar --exclude=.git -czf sources.tar.gz server web
-      - uses: actions/upload-artifact@v4
-        with:
-          name: localized-alphabet-sources
-          path: sources.tar.gz
-          retention-days: 3
-  server:
-    runs-on: ubuntu-latest
+          ref: b2b59e4fe49dbdba26e00d8c1ae85f2cd7d1a58a
+          path: code
+      - id: commit
+        working-directory: code
+        run: |
+          git apply --check ../audit/server.patch
+          git apply ../audit/server.patch
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tests/Jellyfin.Server.Implementations.Tests/Item/BaseItemMapperTests.cs
+          git commit -m 'Isolate sort-name mapper tests'
+          git add Jellyfin.Api/Models/NameInitialQuery.cs Jellyfin.Server.Implementations/Item/BaseItemRepository.QueryBuilding.cs tests/Jellyfin.Server.Implementations.Tests/Item/BaseItemRepositoryNameInitialTests.cs
+          git commit -m 'Group native alphabet aliases when sorting'
+          git push origin HEAD:refs/heads/audit/localized-alphabet-candidate-20260908
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+  tests:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: b2b59e4fe49dbdba26e00d8c1ae85f2cd7d1a58a
+          ref: ${{ needs.prepare.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         with:
           dotnet-version: 10.0.x
       - run: dotnet test Jellyfin.sln --configuration Release --verbosity minimal
-      - run: dotnet format Jellyfin.sln --verify-no-changes --no-restore
+  format:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet format Jellyfin.sln --verify-no-changes
