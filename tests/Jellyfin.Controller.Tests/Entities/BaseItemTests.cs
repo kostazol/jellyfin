@@ -6,7 +6,9 @@ using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Database.Implementations.Enums;
 using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
@@ -86,6 +88,8 @@ public class BaseItemTests
     [InlineData("+ F1", "f")]
     [InlineData("1917", "1")]
     [InlineData("🎬 Ωμέγα", "ω")]
+    [InlineData("Α\u0301λφα", "ά")]
+    [InlineData("\U00010400 name", "\U00010428")]
     public void GetSortNameInitial_PreservesNativeScript(string value, string expected)
     {
         var config = new ServerConfiguration
@@ -102,6 +106,111 @@ public class BaseItemTests
     public void GetSortNameInitial_WithoutAlphaNumericSorting_PreservesNativeScript()
     {
         Assert.Equal("ω", BaseItem.GetSortNameInitial("  Ωμέγα", false, new ServerConfiguration()));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void GetSortNameInitial_CanonicallyEquivalentNamesMatch(bool enableAlphaNumericSorting)
+    {
+        var configuration = new ServerConfiguration();
+
+        Assert.Equal(BaseItem.GetSortNameInitial("İstanbul", enableAlphaNumericSorting, configuration), BaseItem.GetSortNameInitial("I\u0307stanbul", enableAlphaNumericSorting, configuration));
+    }
+
+    [Theory]
+    [InlineData(SortOrder.Ascending, false, false, "Άλφα,Αύρα,Ψυχή,Ωμέγα", 4)]
+    [InlineData(SortOrder.Descending, false, false, "Ωμέγα,Ψυχή,Αύρα,Άλφα", 4)]
+    [InlineData(SortOrder.Ascending, true, false, "Άλφα,Αύρα", 2)]
+    [InlineData(SortOrder.Ascending, false, true, "Ψυχή,Ωμέγα", 2)]
+    [InlineData(SortOrder.Ascending, true, true, "", 0)]
+    public void SortAndPage_AppliesNativeInitialOptions(SortOrder direction, bool include, bool exclude, string expected, int totalCount)
+    {
+        var previousConfigurationManager = BaseItem.ConfigurationManager;
+        var configurationManager = new Mock<IServerConfigurationManager>();
+        configurationManager.SetupGet(manager => manager.Configuration).Returns(new ServerConfiguration());
+        BaseItem.ConfigurationManager = configurationManager.Object;
+        try
+        {
+            BaseItem[] items = [new Movie { Name = "Ωμέγα", SortName = "omega" }, new Movie { Name = "Ψυχή", SortName = "psyche" }, new Movie { Name = "Άλφα", SortName = "alpha" }, new Movie { Name = "Αύρα", SortName = "aura" }];
+            var libraryManager = new Mock<ILibraryManager>();
+            libraryManager.Setup(manager => manager.Sort(It.IsAny<IEnumerable<BaseItem>>(), null, It.IsAny<IEnumerable<(ItemSortBy OrderBy, SortOrder SortOrder)>>())).Returns((IEnumerable<BaseItem> source, User user, IEnumerable<(ItemSortBy OrderBy, SortOrder SortOrder)> order) => direction == SortOrder.Ascending ? source.OrderBy(item => item.SortName, StringComparer.Ordinal) : source.OrderByDescending(item => item.SortName, StringComparer.Ordinal));
+            var query = new InternalItemsQuery
+            {
+                OrderBy = [(ItemSortBy.SortName, direction)],
+                NameInitials = include ? ["Α", "Α\u0301"] : [],
+                ExcludeNameInitials = exclude ? ["Α", "Α\u0301"] : [],
+                NameInitialSortOrder = ["Α|Ά", "Ψ", "Ω"],
+                StartIndex = 1,
+                Limit = 2
+            };
+
+            var result = UserViewBuilder.SortAndPage(items, null, query, libraryManager.Object);
+
+            Assert.Equal(expected.Split(',', StringSplitOptions.RemoveEmptyEntries).Skip(1).Take(2), result.Items.Select(item => item.Name));
+            Assert.Equal(totalCount, result.TotalRecordCount);
+        }
+        finally
+        {
+            BaseItem.ConfigurationManager = previousConfigurationManager;
+        }
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    public void GetItems_ExplicitNativeOrderOverridesRequestedIdOrder(bool listOnly, bool nativeOrder)
+    {
+        var previousLibraryManager = BaseItem.LibraryManager;
+        BaseItem[] items = [new Movie { Id = Guid.NewGuid(), Name = "Ψυχή" }, new Movie { Id = Guid.NewGuid(), Name = "Ωμέγα" }];
+        var query = new InternalItemsQuery
+        {
+            ItemIds = [items[1].Id, items[0].Id],
+            NameInitialSortOrder = nativeOrder ? ["Ψ", "Ω"] : []
+        };
+        var libraryManager = new Mock<ILibraryManager>();
+        libraryManager.Setup(manager => manager.GetItemsResult(query)).Returns(new QueryResult<BaseItem>(items));
+        libraryManager.Setup(manager => manager.GetItemList(query)).Returns(items);
+        BaseItem.LibraryManager = libraryManager.Object;
+        try
+        {
+            var folder = new Folder();
+            var result = listOnly ? folder.GetItemList(query) : folder.GetItems(query).Items;
+
+            Assert.Equal(nativeOrder ? items.Select(item => item.Id) : query.ItemIds, result.Select(item => item.Id));
+        }
+        finally
+        {
+            BaseItem.LibraryManager = previousLibraryManager;
+        }
+    }
+
+    [Theory]
+    [InlineData(ItemSortBy.DateCreated, null)]
+    [InlineData(ItemSortBy.SortName, "alpha")]
+    public void SortAndPage_PreservesNonNameAndSearchOrdering(ItemSortBy sortBy, string? searchTerm)
+    {
+        BaseItem[] items = [new Movie { Name = "Ωμέγα" }, new Movie { Name = "Ψυχή" }];
+        var query = new InternalItemsQuery
+        {
+            OrderBy = [(sortBy, SortOrder.Ascending)],
+            SearchTerm = searchTerm,
+            NameInitialSortOrder = ["Ψ", "Ω"]
+        };
+        var libraryManager = new Mock<ILibraryManager>(MockBehavior.Strict);
+        libraryManager.Setup(manager => manager.Sort(items, null, query.OrderBy)).Returns(items);
+
+        Assert.Equal(items, UserViewBuilder.SortAndPage(items, null, query, libraryManager.Object).Items);
+    }
+
+    [Fact]
+    public void SortAndPage_WithoutInitialOptionsPreservesInputOrder()
+    {
+        BaseItem[] items = [new Movie { Name = "Ωμέγα" }, new Movie { Name = "Ψυχή" }];
+
+        Assert.Equal(items, UserViewBuilder.SortAndPage(items, null, new InternalItemsQuery(), new Mock<ILibraryManager>(MockBehavior.Strict).Object).Items);
     }
 
     [Theory]

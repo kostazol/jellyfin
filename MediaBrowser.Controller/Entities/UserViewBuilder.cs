@@ -485,9 +485,54 @@ namespace MediaBrowser.Controller.Entities
             InternalItemsQuery query,
             ILibraryManager libraryManager)
         {
+            static string GetInitial(BaseItem item) => BaseItem.GetSortNameInitial(string.IsNullOrEmpty(item.ForcedSortName) ? item.Name : item.ForcedSortName, item.EnableAlphaNumericSorting, BaseItem.ConfigurationManager.Configuration);
+
+            static string[] NormalizeInitials(IEnumerable<string> values) => values.Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value.Normalize().ToLowerInvariant()).Distinct(StringComparer.Ordinal).ToArray();
+
+            if (query.NameInitials.Length > 0)
+            {
+                var initials = NormalizeInitials(query.NameInitials).ToHashSet(StringComparer.Ordinal);
+                items = items.Where(item => initials.Contains(GetInitial(item)));
+            }
+
+            if (query.ExcludeNameInitials.Length > 0)
+            {
+                var excludedInitials = NormalizeInitials(query.ExcludeNameInitials).ToHashSet(StringComparer.Ordinal);
+                items = items.Where(item => !excludedInitials.Contains(GetInitial(item)));
+            }
+
             if (query.OrderBy.Count > 0)
             {
                 items = libraryManager.Sort(items, query.User, query.OrderBy);
+            }
+
+            var orderBy = query.OrderBy.Where(order => order.OrderBy != ItemSortBy.Default).ToArray();
+            var initialSortOrder = NormalizeInitials(query.NameInitialSortOrder);
+            if (string.IsNullOrEmpty(query.SearchTerm) && initialSortOrder.Length > 0 && (orderBy.Length == 0 || orderBy[0].OrderBy is ItemSortBy.SortName or ItemSortBy.Name))
+            {
+                var ranks = new Dictionary<string, int>(StringComparer.Ordinal);
+                for (var index = 0; index < initialSortOrder.Length; index++)
+                {
+                    foreach (var alias in NormalizeInitials(initialSortOrder[index].Split('|', StringSplitOptions.RemoveEmptyEntries)))
+                    {
+                        ranks.TryAdd(alias, index + 1);
+                    }
+                }
+
+                if (orderBy.Length == 0)
+                {
+                    items = libraryManager.Sort(items, query.User, [(ItemSortBy.SortName, SortOrder.Ascending)]);
+                }
+
+                int GetRank(BaseItem item)
+                {
+                    var initial = GetInitial(item);
+                    return initial is not null && ranks.TryGetValue(initial, out var rank) ? rank : 0;
+                }
+
+                items = orderBy.Length == 0 || orderBy[0].SortOrder == SortOrder.Ascending
+                    ? items.OrderBy(GetRank)
+                    : items.OrderByDescending(GetRank);
             }
 
             var itemsArray = totalRecordLimit.HasValue ? items.Take(totalRecordLimit.Value).ToArray() : items.ToArray();

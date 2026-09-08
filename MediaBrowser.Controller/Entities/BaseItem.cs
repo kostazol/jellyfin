@@ -1018,6 +1018,7 @@ namespace MediaBrowser.Controller.Entities
                 return null;
             }
 
+            name = name.Normalize();
             var sortable = enableAlphaNumericSorting
                 ? GetPreTransliterationSortName(name, configuration)
                 : name.TrimStart().ToLowerInvariant();

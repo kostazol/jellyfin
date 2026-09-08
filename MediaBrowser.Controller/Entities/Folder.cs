@@ -999,7 +999,7 @@ namespace MediaBrowser.Controller.Entities
             {
                 var result = LibraryManager.GetItemsResult(query);
 
-                if (query.OrderBy.Count == 0 && query.ItemIds.Length > 1)
+                if (query.OrderBy.Count == 0 && query.NameInitialSortOrder.Length == 0 && query.ItemIds.Length > 1)
                 {
                     result.Items = SortItemsByRequest(query, result.Items);
                 }
@@ -1018,7 +1018,7 @@ namespace MediaBrowser.Controller.Entities
             {
                 var result = LibraryManager.GetItemList(query);
 
-                if (query.OrderBy.Count == 0 && query.ItemIds.Length > 1)
+                if (query.OrderBy.Count == 0 && query.NameInitialSortOrder.Length == 0 && query.ItemIds.Length > 1)
                 {
                     return SortItemsByRequest(query, result);
                 }
