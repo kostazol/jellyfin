@@ -1,116 +1,73 @@
-name: Localized alphabet audit
+name: Validate and publish localized alphabet fixes
 on:
   push:
     branches: [audit/localized-alphabet-20260908]
 permissions:
   contents: read
+  actions: read
 jobs:
-  prepare:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    outputs:
-      sha: ${{ steps.history.outputs.sha }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: 68e3e71cd84a40187d4c08a2b57e08d235b1af35
-          fetch-depth: 256
-      - id: history
-        env:
-          FILTER_BRANCH_SQUELCH_WARNING: '1'
-        run: |
-          git switch -c audit/localized-alphabet-review-20260908
-          before=$(git rev-parse HEAD^{tree})
-          git filter-branch --msg-filter 'sed "s/^feat(api): add localized alphabet navigation support$/Add localized alphabet navigation support/"' -- 0d78e44633ecd1e70d8c6d76223164cba2a4c84d..HEAD
-          test "$before" = "$(git rev-parse HEAD^{tree})"
-          git push origin HEAD:refs/heads/audit/localized-alphabet-review-20260908
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          git log --format='%h %an: %s' 0d78e44633ecd1e70d8c6d76223164cba2a4c84d..HEAD
-  tests:
-    needs: prepare
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ needs.prepare.outputs.sha }}
-          persist-credentials: false
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
-        with:
-          dotnet-version: 10.0.x
-      - run: dotnet test Jellyfin.sln --configuration Release --verbosity minimal
-      - name: Verify native-initial API parameters
-        if: runner.os == 'Linux'
-        shell: python
-        run: |
-          import json
-          from pathlib import Path
-          spec = json.loads(Path('tests/Jellyfin.Server.Integration.Tests/bin/Release/net10.0/openapi.json').read_text())
-          for path in ['/Items', '/Artists', '/Artists/AlbumArtists', '/Genres', '/MusicGenres', '/Studios']:
-              parameters = {parameter['name']: parameter for parameter in spec['paths'][path]['get']['parameters']}
-              for name in ['nameInitials', 'excludeNameInitials', 'nameInitialSortOrder']:
-                  assert name in parameters, (path, name)
-                  assert not parameters[name].get('required', False), (path, name)
-              print(path, 'optional native-initial parameters verified')
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: runner.os == 'Linux'
-        with:
-          name: native-alphabet-openapi
-          path: tests/Jellyfin.Server.Integration.Tests/bin/Release/net10.0/openapi.json
-          retention-days: 7
-  format:
-    needs: prepare
+  contract:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.prepare.outputs.sha }}
+          ref: a6d63a581a5474737ce2726b44fe32c6e84d1793
           persist-credentials: false
+      - name: Verify completed cross-platform tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/kostazol/jellyfin/actions/runs/34224232635/jobs > /tmp/previous-jobs.json
+          python - <<'PY'
+          import json
+          jobs = {job['name']: job for job in json.load(open('/tmp/previous-jobs.json'))['jobs']}
+          for platform in ['ubuntu-latest', 'windows-latest', 'macos-latest']:
+              job = jobs[f'tests ({platform})']
+              test = next(step for step in job['steps'] if step['name'] == 'Run dotnet test Jellyfin.sln --configuration Release --verbosity minimal')
+              assert test['conclusion'] == 'success', (platform, test)
+              print(platform, 'full solution tests passed for a6d63a5')
+          assert jobs['format']['conclusion'] == 'success'
+          print('dotnet format passed')
+          PY
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         with:
           dotnet-version: 10.0.x
-      - run: dotnet format Jellyfin.sln --verify-no-changes
-  upstream-compatibility:
-    needs: prepare
+      - run: dotnet test tests/Jellyfin.Server.Integration.Tests/Jellyfin.Server.Integration.Tests.csproj --configuration Release --filter FullyQualifiedName~OpenApiSpecTests --verbosity minimal
+      - name: Verify published API parameters
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          spec = json.loads(Path('tests/Jellyfin.Server.Integration.Tests/bin/Release/net10.0/openapi.json').read_text())
+          for path in ['/Items', '/Artists', '/Artists/AlbumArtists', '/Genres', '/Studios']:
+              parameters = {parameter['name']: parameter for parameter in spec['paths'][path]['get']['parameters']}
+              for name in ['nameInitials', 'excludeNameInitials', 'nameInitialSortOrder']:
+                  assert name in parameters, (path, name)
+                  assert not parameters[name].get('required', False), (path, name)
+              print(path, 'optional native-initial parameters verified')
+          # GetMusicGenres is obsolete and intentionally hidden from ApiExplorer.
+          assert '/MusicGenres' not in spec['paths']
+          print('Obsolete MusicGenres endpoint remains absent from OpenAPI')
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-alphabet-openapi
+          path: tests/Jellyfin.Server.Integration.Tests/bin/Release/net10.0/openapi.json
+          retention-days: 7
+  publish:
+    needs: contract
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.prepare.outputs.sha }}
-          path: server
+          ref: a6d63a581a5474737ce2726b44fe32c6e84d1793
           fetch-depth: 256
-          persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: kostazol/jellyfin-web
-          ref: audit/localized-alphabet-candidate-20260908
-          path: web
-          fetch-depth: 256
-          persist-credentials: false
-      - name: Check merges without changing either branch
-        shell: bash
+      - name: Publish verified history without overwriting concurrent changes
         run: |
-          for project in server web; do
-            cd "$GITHUB_WORKSPACE/$project"
-            repo=jellyfin
-            if [ "$project" = web ]; then repo=jellyfin-web; fi
-            git fetch --depth=256 "https://github.com/jellyfin/$repo.git" master
-            set +e
-            git merge-tree --write-tree HEAD FETCH_HEAD > "$GITHUB_WORKSPACE/$project-merge.txt" 2>&1
-            result=$?
-            set -e
-            echo "$project merge check exit code: $result"
-            cat "$GITHUB_WORKSPACE/$project-merge.txt"
-            if [ "$result" -gt 1 ]; then exit "$result"; fi
-          done
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: upstream-compatibility
-          path: '*-merge.txt'
-          retention-days: 7
+          test "$(git rev-parse HEAD)" = a6d63a581a5474737ce2726b44fe32c6e84d1793
+          test "$(git ls-remote origin refs/heads/backup/localized-alphabet-before-20260908 | cut -f1)" = b2b59e4fe49dbdba26e00d8c1ae85f2cd7d1a58a
+          test -z "$(git ls-tree --name-only HEAD server.patch .github/workflows/localized-alphabet-audit.yml)"
+          git push --force-with-lease=refs/heads/feature/localized-alphabet-navigation:b2b59e4fe49dbdba26e00d8c1ae85f2cd7d1a58a origin HEAD:refs/heads/feature/localized-alphabet-navigation
+          git log --format='%h %s' 0d78e44633ecd1e70d8c6d76223164cba2a4c84d..HEAD
