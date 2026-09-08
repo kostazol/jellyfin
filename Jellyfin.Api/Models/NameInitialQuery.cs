@@ -25,7 +25,8 @@ public class NameInitialQuery
     public IReadOnlyList<string> ExcludeNameInitials { get; set; } = [];
 
     /// <summary>
-    /// Gets or sets the ordered initials used to group SortName or Name ordering.
+    /// Gets or sets the ordered initial groups used for SortName or Name ordering.
+    /// Separate groups with commas and aliases within a group with a pipe (for example, Α|Ά,Β).
     /// </summary>
     [FromQuery(Name = "nameInitialSortOrder")]
     [ModelBinder(typeof(CommaDelimitedCollectionModelBinder))]

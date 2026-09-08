@@ -437,10 +437,14 @@ public sealed partial class BaseItemRepository
 
         for (var index = initials.Count - 1; index >= 0; index--)
         {
-            rank = Expression.Condition(
-                Expression.Equal(initial, Expression.Constant(initials[index], typeof(string))),
-                Expression.Constant(index + 1),
-                rank);
+            var aliases = NormalizeNameInitials(initials[index].Split('|', StringSplitOptions.RemoveEmptyEntries));
+            Expression matches = Expression.Constant(false);
+            foreach (var alias in aliases)
+            {
+                matches = Expression.OrElse(matches, Expression.Equal(initial, Expression.Constant(alias, typeof(string))));
+            }
+
+            rank = Expression.Condition(matches, Expression.Constant(index + 1), rank);
         }
 
         return Expression.Lambda<Func<BaseItemEntity, int>>(rank, entity);
