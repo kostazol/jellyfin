@@ -20,11 +20,13 @@ public class BaseItemMapperTests
         {
             Id = Guid.NewGuid(),
             Name = "Ωμέγα",
-            ForcedSortName = forcedSortName
+            ForcedSortName = forcedSortName,
+            SortName = "cached sort name"
         };
 
         var entity = BaseItemMapper.Map(item, Mock.Of<IServerApplicationHost>(), new ServerConfiguration());
 
         Assert.Equal(expected, entity.SortNameInitial);
+        Assert.Equal(item.SortName, entity.SortName);
     }
 }
