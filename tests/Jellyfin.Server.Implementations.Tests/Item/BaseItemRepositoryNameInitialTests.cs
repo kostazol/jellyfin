@@ -86,13 +86,12 @@ public sealed class BaseItemRepositoryNameInitialTests : SqliteDbTestFixture
     [Theory]
     [InlineData(ItemSortBy.Name)]
     [InlineData(ItemSortBy.SortName)]
-    public void ApplyOrder_GroupsAliasesForBothNameSorts(ItemSortBy sortBy)
+    public void GetItems_GroupsAliasesForBothNameSorts(ItemSortBy sortBy)
     {
-        using var context = CreateDbContext();
         var query = CreateQuery();
         query.OrderBy = [(sortBy, SortOrder.Ascending)];
 
-        var names = _repository.ApplyOrder(context.BaseItems, query, context).Select(item => item.Name).ToArray();
+        var names = _repository.GetItems(query).Items.Select(item => item.Name).ToArray();
 
         Assert.Equal("Other", names[0]);
         Assert.Equal(new[] { "Άλφα", "Αύρα" }.Order(StringComparer.Ordinal), names.Skip(1).Take(2).Order(StringComparer.Ordinal));
