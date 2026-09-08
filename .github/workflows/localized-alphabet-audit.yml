@@ -10,30 +10,23 @@ jobs:
     permissions:
       contents: write
     outputs:
-      sha: ${{ steps.commit.outputs.sha }}
+      sha: ${{ steps.history.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          path: audit
-          persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: b2b59e4fe49dbdba26e00d8c1ae85f2cd7d1a58a
-          path: code
-      - id: commit
-        working-directory: code
+          ref: 68e3e71cd84a40187d4c08a2b57e08d235b1af35
+          fetch-depth: 256
+      - id: history
+        env:
+          FILTER_BRANCH_SQUELCH_WARNING: '1'
         run: |
-          git apply --check ../audit/server.patch
-          git apply ../audit/server.patch
-          git diff --check
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add tests/Jellyfin.Server.Implementations.Tests/Item/BaseItemMapperTests.cs
-          git commit -m 'Isolate sort-name mapper tests'
-          git add Jellyfin.Api/Models/NameInitialQuery.cs Jellyfin.Server.Implementations/Item/BaseItemRepository.QueryBuilding.cs tests/Jellyfin.Server.Implementations.Tests/Item/BaseItemRepositoryNameInitialTests.cs
-          git commit -m 'Group native alphabet aliases when sorting'
-          git push origin HEAD:refs/heads/audit/localized-alphabet-candidate-20260908
+          git switch -c audit/localized-alphabet-review-20260908
+          before=$(git rev-parse HEAD^{tree})
+          git filter-branch --msg-filter 'sed "s/^feat(api): add localized alphabet navigation support$/Add localized alphabet navigation support/"' -- 0d78e44633ecd1e70d8c6d76223164cba2a4c84d..HEAD
+          test "$before" = "$(git rev-parse HEAD^{tree})"
+          git push origin HEAD:refs/heads/audit/localized-alphabet-review-20260908
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          git log --format='%h %an: %s' 0d78e44633ecd1e70d8c6d76223164cba2a4c84d..HEAD
   tests:
     needs: prepare
     strategy:
@@ -51,6 +44,25 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - run: dotnet test Jellyfin.sln --configuration Release --verbosity minimal
+      - name: Verify native-initial API parameters
+        if: runner.os == 'Linux'
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          spec = json.loads(Path('tests/Jellyfin.Server.Integration.Tests/bin/Release/net10.0/openapi.json').read_text())
+          for path in ['/Items', '/Artists', '/Artists/AlbumArtists', '/Genres', '/MusicGenres', '/Studios']:
+              parameters = {parameter['name']: parameter for parameter in spec['paths'][path]['get']['parameters']}
+              for name in ['nameInitials', 'excludeNameInitials', 'nameInitialSortOrder']:
+                  assert name in parameters, (path, name)
+                  assert not parameters[name].get('required', False), (path, name)
+              print(path, 'optional native-initial parameters verified')
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: runner.os == 'Linux'
+        with:
+          name: native-alphabet-openapi
+          path: tests/Jellyfin.Server.Integration.Tests/bin/Release/net10.0/openapi.json
+          retention-days: 7
   format:
     needs: prepare
     runs-on: ubuntu-latest
@@ -64,3 +76,41 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - run: dotnet format Jellyfin.sln --verify-no-changes
+  upstream-compatibility:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          path: server
+          fetch-depth: 256
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: kostazol/jellyfin-web
+          ref: audit/localized-alphabet-candidate-20260908
+          path: web
+          fetch-depth: 256
+          persist-credentials: false
+      - name: Check merges without changing either branch
+        shell: bash
+        run: |
+          for project in server web; do
+            cd "$GITHUB_WORKSPACE/$project"
+            repo=jellyfin
+            if [ "$project" = web ]; then repo=jellyfin-web; fi
+            git fetch --depth=256 "https://github.com/jellyfin/$repo.git" master
+            set +e
+            git merge-tree --write-tree HEAD FETCH_HEAD > "$GITHUB_WORKSPACE/$project-merge.txt" 2>&1
+            result=$?
+            set -e
+            echo "$project merge check exit code: $result"
+            cat "$GITHUB_WORKSPACE/$project-merge.txt"
+            if [ "$result" -gt 1 ]; then exit "$result"; fi
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: upstream-compatibility
+          path: '*-merge.txt'
+          retention-days: 7
