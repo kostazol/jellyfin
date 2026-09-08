@@ -1,0 +1,41 @@
+name: Localized alphabet audit
+on:
+  push:
+    branches:
+      - audit/localized-alphabet-20260908
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: b2b59e4fe49dbdba26e00d8c1ae85f2cd7d1a58a
+          path: server
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: kostazol/jellyfin-web
+          ref: 459fd45b6cb75bb0233b4c8be0f6f6548d5e6f69
+          path: web
+          persist-credentials: false
+      - run: tar --exclude=.git -czf sources.tar.gz server web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: localized-alphabet-sources
+          path: sources.tar.gz
+          retention-days: 3
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: b2b59e4fe49dbdba26e00d8c1ae85f2cd7d1a58a
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet test Jellyfin.sln --configuration Release --verbosity minimal
+      - run: dotnet format Jellyfin.sln --verify-no-changes --no-restore
